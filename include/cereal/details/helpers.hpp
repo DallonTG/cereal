@@ -164,6 +164,7 @@ namespace cereal
           @internal */
       NameValuePair( char const * n, T && v ) : name(n), value(std::forward<T>(v)), innerName(nullptr) {}
       NameValuePair<T>& withInnerName(char const* n) { innerName = n; return *this; }
+      NameValuePair<T>& withInnerName(char const * n, char const* inner) { name = n; innerName = inner; return *this; }
 
       char const * name;
       Type value;
