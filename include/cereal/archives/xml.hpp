@@ -117,11 +117,13 @@ namespace cereal
           explicit Options( int precision_ = std::numeric_limits<double>::max_digits10,
                             bool indent_ = true,
                             bool outputType_ = false,
-                            bool sizeAttributes_ = true ) :
+                            bool sizeAttributes_ = true ),
+                            const char * rootName_ = xml_detail::CEREAL_XML_STRING ) :
             itsPrecision( precision_ ),
             itsIndent( indent_ ),
             itsOutputType( outputType_ ),
-            itsSizeAttributes( sizeAttributes_ )
+            itsSizeAttributes( sizeAttributes_ ),
+            itsRootName( rootName )
           { }
 
           /*! @name Option Modifiers
@@ -153,6 +155,7 @@ namespace cereal
           bool itsIndent;
           bool itsOutputType;
           bool itsSizeAttributes;
+          const char * itsRootName;
       };
 
       //! Construct, outputting to the provided stream upon destruction
@@ -174,7 +177,7 @@ namespace cereal
         itsXML.append_node( node );
 
         // allocate root node
-        auto root = itsXML.allocate_node( rapidxml::node_element, xml_detail::CEREAL_XML_STRING );
+        auto root = itsXML.allocate_node( rapidxml::node_element, options.itsRootName );
         itsXML.append_node( root );
         itsNodes.emplace( root );
 
@@ -186,7 +189,7 @@ namespace cereal
       }
 
       //! Destructor, flushes the XML
-      ~XMLOutputArchive() CEREAL_NOEXCEPT
+      ~XMLOutputArchive()
       {
         const int flags = itsIndent ? 0x0 : rapidxml::print_no_indenting;
         rapidxml::print( itsStream, itsXML, flags );
@@ -210,7 +213,7 @@ namespace cereal
           itsNodes.top().node->append_attribute( itsXML.allocate_attribute( "type", "cereal binary data" ) );
 
         finishNode();
-      }
+      };
 
       //! @}
       /*! @name Internal Functionality
@@ -227,7 +230,7 @@ namespace cereal
       void startNode()
       {
         // generate a name for this new node
-          const auto nameString = itsNodes.top().getValueName();
+        const auto nameString = itsNodes.top().getValueName();
 
         // allocate strings for all of the data in the XML object
         auto namePtr = itsXML.allocate_string( nameString.data(), nameString.length() + 1 );
@@ -235,9 +238,7 @@ namespace cereal
         // insert into the XML
         auto node = itsXML.allocate_node( rapidxml::node_element, namePtr, nullptr, nameString.size() );
         itsNodes.top().node->append_node( node );
-        const auto innerNameString = itsNodes.top().innerName;
-        itsNodes.emplace(node);
-        itsNodes.top().innerName = innerNameString;
+        itsNodes.emplace( node );
       }
 
       //! Designates the most recently added node as finished
@@ -247,10 +248,9 @@ namespace cereal
       }
 
       //! Sets the name for the next node created with startNode
-      void setNextName(const char * name, const char * innerName = nullptr)
+      void setNextName( const char * name )
       {
-          itsNodes.top().name = name;
-          itsNodes.top().innerName = innerName;
+        itsNodes.top().name = name;
       }
 
       //! Saves some data, encoded as a string, into the current top level node
@@ -330,14 +330,12 @@ namespace cereal
                   const char * nm = nullptr ) :
           node( n ),
           counter( 0 ),
-          name( nm ),
-          innerName(nullptr)
+          name( nm )
         { }
 
         rapidxml::xml_node<> * node; //!< A pointer to this node
         size_t counter;              //!< The counter for naming child nodes
         const char * name;           //!< The name for the next child node
-        const char * innerName;      //!< The name for the inner child node
 
         //! Gets the name for the next child node created from this node
         /*! The name will be automatically generated using the counter if
@@ -348,12 +346,8 @@ namespace cereal
           if( name )
           {
             auto n = name;
-            name = innerName;
+            name = nullptr;
             return {n};
-          }
-          else if (innerName)
-          {
-              return {innerName};
           }
           else
             return "value" + std::to_string( counter++ ) + "\0";
@@ -423,7 +417,7 @@ namespace cereal
           as serialization starts
 
           @param stream The stream to read from.  Can be a stringstream or a file. */
-      XMLInputArchive( std::istream & stream ) :
+      XMLInputArchive( std::istream & stream, const char * rootName = xml_detail::CEREAL_XML_STRING ) :
         InputArchive<XMLInputArchive>( this ),
         itsData( std::istreambuf_iterator<char>( stream ), std::istreambuf_iterator<char>() )
       {
@@ -445,14 +439,12 @@ namespace cereal
         }
 
         // Parse the root
-        auto root = itsXML.first_node( xml_detail::CEREAL_XML_STRING );
+        auto root = itsXML.first_node( rootName );
         if( root == nullptr )
           throw Exception("Could not detect cereal root node - likely due to empty or invalid input");
         else
           itsNodes.emplace( root );
       }
-
-      ~XMLInputArchive() CEREAL_NOEXCEPT = default;
 
       //! Loads some binary data, encoded as a base64 string, optionally specified by some name
       /*! This will automatically start and finish a node to load the data, and can be called directly by
@@ -476,7 +468,7 @@ namespace cereal
         std::memcpy( data, decoded.data(), decoded.size() );
 
         finishNode();
-      }
+      };
 
       //! @}
       /*! @name Internal Functionality
@@ -899,7 +891,7 @@ namespace cereal
   template <class T> inline
   void CEREAL_SAVE_FUNCTION_NAME( XMLOutputArchive & ar, NameValuePair<T> const & t )
   {
-    ar.setNextName( t.name, t.innerName );
+    ar.setNextName( t.name );
     ar( t.value );
   }
 
@@ -907,8 +899,13 @@ namespace cereal
   template <class T> inline
   void CEREAL_LOAD_FUNCTION_NAME( XMLInputArchive & ar, NameValuePair<T> & t )
   {
-    ar.setNextName( t.name );
-    ar( t.value );
+    try {
+      ar.setNextName( t.name );
+      ar( t.value );
+    }
+    catch (std::exception const & e) {
+      throw Exception("XML Parsing for NVP (" + std::string( t.name ) + ") failed. Error: " + e.what());
+    }
   }
 
   // ######################################################################
